@@ -5,22 +5,23 @@ from datetime import datetime
 from pathlib import Path
 
 # =========================
-# Threshold constants (spec)
+# ✅ Threshold constants (can be adjusted)
 # =========================
-CPU_THRESHOLD = 1.0
-MEM_THRESHOLD = 1.0
-DISK_THRESHOLD = 1.0
+CPU_THRESHOLD = 1.0      # > 80% on real mode (1.0 for auto alert test mode)
+MEM_THRESHOLD = 1.0      # > 85% on real mode
+DISK_THRESHOLD = 1.0     # > 90% on real mode
 
 DB_PATH = Path("log.db")
 
 # =========================
-# Database helpers
+# ✅ Database Initialization
 # =========================
 def init_db(db_path: Path) -> sqlite3.Connection:
     """Create DB and tables if not exist, then return connection."""
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
-    # Week 7 system_log table (re-use)
+
+    # Week 7 table (system logs)
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS system_log (
@@ -33,7 +34,8 @@ def init_db(db_path: Path) -> sqlite3.Connection:
         )
         """
     )
-    # Bonus: separate table for alerts history
+
+    # Week 8 Bonus table (alert history)
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS alerts_log (
@@ -44,17 +46,21 @@ def init_db(db_path: Path) -> sqlite3.Connection:
         )
         """
     )
+
     conn.commit()
     return conn
 
-def insert_system_log(conn: sqlite3.Connection, ts: str, cpu: float, mem: float, disk: float, status: str):
+# =========================
+# ✅ Insert records into tables
+# =========================
+def insert_system_log(conn, ts, cpu, mem, disk, status):
     conn.execute(
         "INSERT INTO system_log (ts, cpu, memory, disk, status) VALUES (?, ?, ?, ?, ?)",
         (ts, cpu, mem, disk, status),
     )
     conn.commit()
 
-def insert_alert(conn: sqlite3.Connection, ts: str, level: str, message: str):
+def insert_alert(conn, ts, level, message):
     conn.execute(
         "INSERT INTO alerts_log (ts, level, message) VALUES (?, ?, ?)",
         (ts, level, message),
@@ -62,24 +68,20 @@ def insert_alert(conn: sqlite3.Connection, ts: str, level: str, message: str):
     conn.commit()
 
 # =========================
-# Monitoring helpers
+# ✅ System metric reader
 # =========================
 def read_system_metrics():
-    """
-    Read current CPU, Memory, Disk in percent.
-    cpu_percent(interval=1) blocks 1s for accurate CPU sample.
-    """
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    cpu = float(psutil.cpu_percent(interval=1))
-    mem = float(psutil.virtual_memory().percent)
-    disk = float(psutil.disk_usage("/").percent)
-    status = "UP"  # simple heartbeat flag
+    cpu = psutil.cpu_percent(interval=1)          # 1 sec sampling
+    mem = psutil.virtual_memory().percent
+    disk = psutil.disk_usage("/").percent
+    status = "UP"
     return ts, cpu, mem, disk, status
 
-def check_alerts(cpu: float, mem: float, disk: float):
-    """
-    Return list of alert messages if any threshold is exceeded.
-    """
+# =========================
+# ✅ Alert checker
+# =========================
+def check_alerts(cpu, mem, disk):
     alerts = []
     if cpu > CPU_THRESHOLD:
         alerts.append(f"High CPU usage! ({cpu:.1f}%)")
@@ -90,13 +92,12 @@ def check_alerts(cpu: float, mem: float, disk: float):
     return alerts
 
 # =========================
-# Main loop
+# ✅ Main loop
 # =========================
 def main():
     conn = init_db(DB_PATH)
-
-    entries = 5          # spec: log 5 entries
-    interval_sec = 10    # spec: 10 seconds between records
+    entries = 5                       # Log 5 entries (as required)
+    interval_sec = 10                 # 10 seconds interval
 
     print("Starting Week 8 monitor (threshold alerts). Press Ctrl+C to stop.\n")
     try:
@@ -104,27 +105,25 @@ def main():
             ts, cpu, mem, disk, status = read_system_metrics()
             insert_system_log(conn, ts, cpu, mem, disk, status)
 
-            # Print the logged line (similar to spec example)
             print(f"Logged: ('{ts}', {cpu:.1f}, {mem:.1f}, {disk:.1f}, '{status}')", end="")
 
-            # Check & print alerts (only when exceeded)
             alerts = check_alerts(cpu, mem, disk)
             if alerts:
                 for msg in alerts:
                     print(f" ⚠️ ALERT: {msg}", end="")
-                    # bonus: store alerts to a separate table
-                    insert_alert(conn, ts, "WARNING", msg)
-            print()  # newline
+                    insert_alert(conn, ts, "WARNING", msg)  # save alert in table
 
-            # sleep between records except after the last one
+            print()
+
             if i < entries:
                 time.sleep(interval_sec)
 
     except KeyboardInterrupt:
         print("\nInterrupted by user.")
+
     finally:
         conn.close()
-        print("\nDone. Records saved to log.db")
+        print("\nDone. Records saved to log.db ✅")
 
 if __name__ == "__main__":
     main()
