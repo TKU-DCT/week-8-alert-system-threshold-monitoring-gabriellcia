@@ -5,35 +5,115 @@ import os
 import time
 import subprocess
 import platform
+import re
+import pandas as pd   # <— untuk export CSV
 
 DB_NAME = "log.db"
 
-# Define threshold values
-CPU_THRESHOLD = 80.0
-MEM_THRESHOLD = 85.0
-DISK_THRESHOLD = 90.0
+def init_db():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS system_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            cpu REAL,
+            memory REAL,
+            disk REAL,
+            ping_status TEXT,
+            ping_ms REAL
+        )
+    """)
+    conn.commit()
+    conn.close()
 
 def get_system_info():
-    # TODO: Collect system info (timestamp, cpu, memory, disk, ping)
-    pass
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cpu = psutil.cpu_percent(interval=1)
+    memory = psutil.virtual_memory().percent
+    disk = psutil.disk_usage('/').percent
+    ping_status, ping_ms = ping_host("8.8.8.8")
+    return (now, cpu, memory, disk, ping_status, ping_ms)
 
 def ping_host(host):
-    # TODO: Ping 8.8.8.8 and return ("UP", ms) or ("DOWN", -1)
-    pass
+    try:
+        param = "-n" if platform.system().lower() == "windows" else "-c"
+        out = subprocess.check_output(
+            ["ping", param, "1", host],
+            stderr=subprocess.DEVNULL
+        ).decode(errors="ignore")
+        ms = parse_ping_time(out)
+        return ("UP", ms if ms is not None else -1.0)
+    except Exception:
+        return ("DOWN", -1.0)
 
-def parse_ping_time(output):
-    # TODO: Extract ping response time from command output
-    pass
+_time_re = re.compile(r"time[=<]\s*([0-9]*\.?[0-9]+)\s*ms", re.IGNORECASE)
+
+def parse_ping_time(output: str):
+    """Linux/macOS: 'time=17.2 ms'; Windows: 'time<1ms' / 'time=2ms'."""
+    m = _time_re.search(output)
+    if not m:
+        return None
+    try:
+        return float(m.group(1))
+    except ValueError:
+        return None
 
 def insert_log(data):
-    # TODO: Insert log data into SQLite (reuse Week 7 function)
-    pass
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO system_log (timestamp, cpu, memory, disk, ping_status, ping_ms)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        data,
+    )
+    conn.commit()
+    conn.close()
 
-def check_alerts(cpu, memory, disk):
-    # TODO: Print alert messages if any value exceeds its threshold
-    pass
+def show_last_entries(limit=5):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM system_log ORDER BY id DESC LIMIT ?", (limit,))
+    rows = cursor.fetchall()[::-1]
+    print("\n... Last {} entries:".format(min(limit, len(rows))))
+    for row in rows:
+        print(row)
+    cursor.execute("SELECT COUNT(*) FROM system_log")
+    total = cursor.fetchone()[0]
+    print(f"\nTotal records in database: {total}")
+    conn.close()
+
+
+def show_down_entries():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM system_log WHERE ping_status='DOWN'")
+    rows = cursor.fetchall()
+    print("\n=== Entries with DOWN ping status ===")
+    if not rows:
+        print("No DOWN entries found.")
+    else:
+        for row in rows:
+            print(row)
+    conn.close()
+
+
+def export_to_csv(csv_path="log.csv"):
+    conn = sqlite3.connect(DB_NAME)
+    df = pd.read_sql_query("SELECT * FROM system_log ORDER BY id ASC", conn)
+    df.to_csv(csv_path, index=False)
+    conn.close()
+    print(f"\n✅ Exported {len(df)} rows to {csv_path}")
 
 if __name__ == "__main__":
-    # TODO: Initialize and log 5 records (every 10 seconds)
-    # For each record, call check_alerts()
-    pass
+    init_db()
+    for _ in range(5):
+        row = get_system_info()
+        insert_log(row)
+        print("Logged:", row)
+        time.sleep(10)
+    show_last_entries()
+    show_down_entries()  
+    export_to_csv("log.csv")  
